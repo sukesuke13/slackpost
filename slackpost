@@ -1,4 +1,4 @@
-#! /usr/bin/python
+#! /usr/bin/env python
 # coding: utf-8
 
 import argparse
@@ -13,18 +13,19 @@ parser = argparse.ArgumentParser(formatter_class=RawTextHelpFormatter,
             description='Slackにメッセージを投稿するプログラムです。\n'
                         'ユーザ名やアイコンを指定して投稿することができます。\n'
                         '画像などの投稿はできません。')
+
+### 位置指定引数 ###
+# テキストを指定。ただし省略することができる
+parser.add_argument('text', nargs='?',
+                    help='送信テキストを指定します。\n'
+                         '省略した場合は、標準入力を送信テキストとします。')
+
 ### オプション ###
 # トークンを指定。省略した場合は、環境変数 SLACKTOKEN を参照する
 parser.add_argument('-T', '--token',
                     help='Slackのトークンを指定します。\n'
                          '省略した場合は環境変数の SLACK_TOKEN を参照します。\n'
                          '$ export SLACK_TOKEN=xxxxxxxxxxxxxxxxxxx')
-
-# テキストを指定
-parser.add_argument('-t', '--text',
-                    help='送信テキストを指定します。\n'
-                         '省略した場合は、標準入力を送信テキストとします。')
-
 
 # 送信先を決定するオプショングループ
 ch_grp = parser.add_argument_group(title='送信チャンネルに関するオプション',
@@ -134,9 +135,9 @@ try:
         elif body['error'] == 'invalid_auth':
             sys.stderr.write('権限がありません。おそらくトークンが正しくありません\n')
         elif body['error'] == 'no_text':
-            sys.stderr.write('空のテキストが指定されました')
+            sys.stderr.write('空のテキストが指定されました\n')
         elif body['error'] == 'msg_too_long':
-            sys.stderr.write('テキストが長すぎます')
+            sys.stderr.write('テキストが長すぎます\n')
         else:
             sys.stderr.write('その他のエラー')
         sys.exit(1)
@@ -145,4 +146,3 @@ except Exception as e:
     sys.stderr.write(e.message + '\n')
     sys.exit(1)
 
-#print body
