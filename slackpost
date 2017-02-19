@@ -1,0 +1,148 @@
+#! /usr/bin/python
+# coding: utf-8
+
+import argparse
+from argparse import RawTextHelpFormatter
+import os
+import sys
+import urllib
+import urllib2
+import json
+
+parser = argparse.ArgumentParser(formatter_class=RawTextHelpFormatter,
+            description='Slackにメッセージを投稿するプログラムです。\n'
+                        'ユーザ名やアイコンを指定して投稿することができます。\n'
+                        '画像などの投稿はできません。')
+### オプション ###
+# トークンを指定。省略した場合は、環境変数 SLACKTOKEN を参照する
+parser.add_argument('-T', '--token',
+                    help='Slackのトークンを指定します。\n'
+                         '省略した場合は環境変数の SLACK_TOKEN を参照します。\n'
+                         '$ export SLACK_TOKEN=xxxxxxxxxxxxxxxxxxx')
+
+# テキストを指定
+parser.add_argument('-t', '--text',
+                    help='送信テキストを指定します。\n'
+                         '省略した場合は、標準入力を送信テキストとします。')
+
+
+# 送信先を決定するオプショングループ
+ch_grp = parser.add_argument_group(title='送信チャンネルに関するオプション',
+                        description='送信先のチャンネルを決定します。\n'
+                                    '省略した場合は、環境変数の SLACK_CHANNEL を参照します。\n'
+                                    '$ export SLACK_CHANNEL=#general')
+ch_grp_ex = ch_grp.add_mutually_exclusive_group()
+ch_grp_ex.add_argument('-c', '--channel', help='送信するチャンネル。#はなくても良いです。\n'
+                                               'ただし、#はコメントとして解釈されるため注意が必要です。')
+ch_grp_ex.add_argument('-d', '--direct', help='送信するダイレクトメッセージ。@はなくても良いです。')
+
+# ユーザ情報に関するオプショングループ
+usr_grp = parser.add_argument_group(title='ユーザに関するオプション',
+                        description='ユーザに関する情報を決定します。\n'
+                                    '省略した場合は、アカウントの名前とアイコンが使われます。')
+# ユーザ名を指定
+usr_grp.add_argument('-u', '--username', help='ユーザ名を指定する。全角文字も対応しています。')
+icon_grp_ex = usr_grp.add_mutually_exclusive_group()    # アイコンに関しては相互排他
+# アイコンを絵文字から指定
+icon_grp_ex.add_argument('-i', '--icon_emoji', help='表示に用いるアイコンを指定する。\':\'は不要です。')
+# アイコンに使う画像のURLを指定
+icon_grp_ex.add_argument('-I', '--icon_url', help='表示に用いるアイコン画像のURLを指定します。')
+
+# テキストをスニペットに指定するオプショングループ
+sni_grp = parser.add_argument_group(title='スニペットに関するオプション',
+                        description='テキストをスニペットとして投稿するときに指定します。\n'
+                                    'スニペットと指定した場合は、\n'
+                                    'ユーザ情報に関するオプションが無視されます。')
+# 「nargs='?', const=True」で、FILENAMEを省略した場合、Trueが代入される
+sni_grp.add_argument('-s', '--snippet', metavar='FILETYPE', nargs='?', const=True,
+                    help='送信テキストをスニペットに指定します。\n'
+                         'FILETYPE は、ファイルの種類を指定ます(ex. html, python)。\n'
+                         'FILETYPE を省略した場合は、自動種別判定となります。')
+sni_grp.add_argument('-n', '--name', help='スニペットの名前（表示ファイル名）を指定します。')
+
+### 引数を解析する ###
+args = parser.parse_args()
+
+# 引数を変数に代入す
+params = {}
+
+# トークン。指定がない場合は環境変数から得る
+if args.token:
+    token = args.token
+else:
+    token = os.environ.get('SLACK_TOKEN')    # 定義されていない場合はNone
+    if not token:
+        sys.stderr.write('環境変数に SLACK_TOKEN が定義されていません\n')
+        sys.exit(1)
+params['token'] = token
+
+# 送信テキスト。指定がない場合は標準入力から
+if args.text:
+    params['text'] = args.text
+else:
+    params['text'] = ''.join(sys.stdin.readlines())
+
+# チャンネル。#や@がない場合は追加する
+if args.channel:
+    channel = args.channel
+    if channel[0] != '#': channel = '#' + channel
+elif args.direct:
+    channel = args.direct
+    if channel[0] != '@': channel = '@' + channel
+else:
+    channel = os.environ.get('SLACK_CHANNEL')   # 定義されていない場合はNone
+    if not token:
+        sys.stderr.write('環境変数に SLACK_CHANNEL が定義されていません\n')
+        sys.exit(1)
+params['channel'] = channel
+
+# ユーザ情報に関するる情報
+if args.username:   params['username'] = args.username  # ユーザ名
+# アイコンに使う絵文字。':'で囲うようにする
+if args.icon_emoji: params['icon_emoji'] = ':' + args.icon_emoji.strip(':') + ':'
+if args.icon_url:   params['icon_url'] = args.icon_url      # アイコンに使う画像のURL
+# ユーザ名もアイコンも指定がない場合は、as_userを有効にする
+if (not args.username) and (not args.icon_emoji) and (not args.icon_url):
+    params['as_user'] = 'true'
+
+
+# スニペット指定があるのとないので、urlなどを分ける
+if not args.snippet:
+    url = 'https://slack.com/api/chat.postMessage'
+else:
+    url = 'https://slack.com/api/files.upload'
+    params['content'] = params.pop('text')      # テキストをコンテンツに移す
+    params['channels'] = params.pop('channel')  # チャンネルが複数形になる
+    if args.snippet != True:    # -s オプションの後ろにファイルタイプが指定されていれば、指定する
+        params['filetype'] = args.snippet
+    else:                       # 指定がない場合は 'auto' にする
+        params['filetype'] = 'auto'
+    if args.name: params['filename'] = args.name    # ファイル名指定がある場合は、指定する
+
+try:
+    params = urllib.urlencode(params)
+    req = urllib2.Request(url, params)
+    res = urllib2.urlopen(req)
+    body = json.loads(res.read())
+    if body['ok'] == False:
+        sys.stderr.write('送信失敗:%s\n' % str(body['error']))
+        if body['error'] == 'channel_not_found':
+            sys.stderr.write('チャンネルが存在しません。'
+                             '不参加の鍵付きチャンネルでもこのエラーになります\n')
+        elif body['error'] == 'not_in_channel':
+            sys.stderr.write('指定したチャンネルに参加していません\n')
+        elif body['error'] == 'invalid_auth':
+            sys.stderr.write('権限がありません。おそらくトークンが正しくありません\n')
+        elif body['error'] == 'no_text':
+            sys.stderr.write('空のテキストが指定されました')
+        elif body['error'] == 'msg_too_long':
+            sys.stderr.write('テキストが長すぎます')
+        else:
+            sys.stderr.write('その他のエラー')
+        sys.exit(1)
+except Exception as e:
+    sys.stderr.write('ネットワークエラー発生\n')
+    sys.stderr.write(e.message + '\n')
+    sys.exit(1)
+
+#print body
